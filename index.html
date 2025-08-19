@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Actuele Voorraad — Excel Import</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #0d1b2a;
+      color: #e0e6ed;
+    }
+    h1, h2 {
+      color: #f1f5f9;
+    }
+    #file {
+      margin: 10px 0 20px;
+      background: #1b263b;
+      color: #e0e6ed;
+      padding: 6px;
+      border-radius: 6px;
+      border: 1px solid #415a77;
+    }
+    #typeChips label {
+      margin-right: 10px;
+      display: inline-flex;
+      align-items: center;
+      background: #1b263b;
+      color: #e0e6ed;
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid #415a77;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 20px 0;
+      background: #1b263b;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+    }
+    th, td {
+      border: 1px solid #415a77;
+      padding: 8px 12px;
+      text-align: center;
+      color: #e0e6ed;
+    }
+    th {
+      background: #274060;
+    }
+    tr:nth-child(even) {
+      background: #1e3350;
+    }
+    canvas {
+      max-width: 1800px;
+      height: 800px !important;
+      background: #1b263b;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+    }
+    #controls {
+      margin: 15px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Actuele Voorraad</h1>
+  <input id="file" type="file" accept=".xlsx,.xls" />
+  <div id="typeChips"></div>
+
+  <div id="controls">
+    <label style="cursor:pointer"><input type="checkbox" id="showTrend" /> Toon trendlijnen</label>
+  </div>
+
+  <h2>Overzicht eindvoorraad per producttype</h2>
+  <table id="table">
+    <thead></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Verloop eindvoorraad</h2>
+  <canvas id="chart"></canvas>
+
+<script>
+  const MAP_SYNONIEMEN = {
+    'schoenen': 'Klompen',
+    'klompen': 'Klompen',
+    'sneakers': 'Sneakers',
+    'mokken': 'Mokken',
+    'sokken': 'Sokken',
+    'compressiesokken': 'Compressiesokken'
+  };
+
+  function normaliseerType(raw) {
+    if (!raw) return 'Onbekend';
+    const key = String(raw).trim().toLowerCase();
+    if (MAP_SYNONIEMEN[key]) return MAP_SYNONIEMEN[key];
+    if (/^sok(ken)?$/.test(key)) return 'Sokken';
+    if (/^compressie\s*sok(ken)?$/.test(key)) return 'Compressiesokken';
+    if (/^schoen(en)?$/.test(key)) return 'Klompen';
+    if (/^sneaker(s)?$/.test(key)) return 'Sneakers';
+    if (/^mok(ken)?$/.test(key)) return 'Mokken';
+    return key.charAt(0).toUpperCase()+key.slice(1);
+  }
+
+  function parseNumber(v){
+    if (v == null || v === '') return 0;
+    if (typeof v === 'number') return v;
+    const s = String(v).replace(/\./g,'').replace(',', '.');
+    const n = Number(s);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function detectKolommen(headers){
+    const idx = { product: -1, eindvoorraad: -1 };
+    headers.forEach((h,i)=>{
+      const k = String(h||'').trim().toLowerCase();
+      if (idx.product === -1 && k === 'product type') idx.product = i;
+      if (idx.eindvoorraad === -1 && k === 'ending inventory units') idx.eindvoorraad = i;
+    });
+    return idx;
+  }
+
+  function sortMonths(months){
+    return months.slice().sort((a,b)=>{
+      const da = Date.parse(a+"-01") || Date.parse(a);
+      const db = Date.parse(b+"-01") || Date.parse(b);
+      return (da||0) - (db||0);
+    });
+  }
+
+  function calcTrendline(yValues){
+    const n = yValues.length;
+    const xVals = Array.from({length:n}, (_,i)=>i+1);
+    const xMean = xVals.reduce((a,b)=>a+b,0)/n;
+    const yMean = yValues.reduce((a,b)=>a+b,0)/n;
+    let num=0, den=0;
+    for(let i=0;i<n;i++){ num += (xVals[i]-xMean)*(yValues[i]-yMean); den += (xVals[i]-xMean)**2; }
+    const slope = num/den;
+    const intercept = yMean - slope*xMean;
+    return xVals.map(x=> slope*x+intercept);
+  }
+
+  let months = [];
+  let types = new Set();
+  let pivot = {};
+  let chart;
+
+  const $file = document.getElementById('file');
+  const $typeChips = document.getElementById('typeChips');
+  const $tableHead = document.querySelector('#table thead');
+  const $tableBody = document.querySelector('#table tbody');
+  const $showTrend = document.getElementById('showTrend');
+
+  $file.addEventListener('change', async (e)=>{
+    const file = e.target.files?.[0];
+    if(!file) return;
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    months = []; types = new Set(); pivot = {};
+
+    wb.SheetNames.forEach(sheetName=>{
+      const ws = wb.Sheets[sheetName];
+      const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+      if (json.length === 0) return;
+      const headers = json[0];
+      const idx = detectKolommen(headers);
+      if (idx.product === -1 || idx.eindvoorraad === -1) return;
+
+      const maand = sheetName;
+      if (!months.includes(maand)) months.push(maand);
+      if (!pivot[maand]) pivot[maand] = {};
+
+      for (let r=1; r<json.length; r++){
+        const row = json[r];
+        const t = normaliseerType(row[idx.product]);
+        const val = parseNumber(row[idx.eindvoorraad]);
+        types.add(t);
+        pivot[maand][t] = (pivot[maand][t]||0) + val;
+      }
+    });
+
+    months = sortMonths(months);
+
+    buildTypeFilters();
+    renderChart();
+    renderTable();
+  });
+
+  function buildTypeFilters(){
+    $typeChips.innerHTML = '';
+    Array.from(types).sort().forEach(t=>{
+      const id = `t-${t.replace(/[^a-z0-9]+/gi,'-')}`;
+      const wrap = document.createElement('label');
+      wrap.innerHTML = `<input id="${id}" type="checkbox" checked> ${t}`;
+      wrap.querySelector('input').addEventListener('change', ()=>{ renderChart(); renderTable(); });
+      $typeChips.appendChild(wrap);
+    });
+  }
+
+  function getSelectedTypes(){
+    return Array.from($typeChips.querySelectorAll('input:checked')).map(cb=>cb.nextSibling.textContent.trim());
+  }
+
+  function renderChart(){
+    const ctx = document.getElementById('chart').getContext('2d');
+    const selected = getSelectedTypes();
+    const colors = ['#ffb703','#8ecae6','#fb8500','#ff006e','#06d6a0','#ffd166','#ef476f','#118ab2'];
+
+    const datasets = selected.map((t,i)=>({ 
+      label: t, 
+      data: months.map(m=> pivot[m]?.[t] ?? 0), 
+      borderColor: colors[i % colors.length], 
+      backgroundColor: colors[i % colors.length], 
+      borderWidth:2, tension:.2
+    }));
+
+    if ($showTrend.checked){
+      selected.forEach((t,i)=>{
+        const values = months.map(m=> pivot[m]?.[t] ?? 0);
+        const trend = calcTrendline(values);
+        datasets.push({
+          label: t+" trend", 
+          data: trend,
+          borderColor: colors[i % colors.length],
+          borderDash:[5,5],
+          borderWidth:1.5,
+          fill:false,
+          pointRadius:0,
+          tension:0
+        });
+      });
+    }
+
+    if(chart) chart.destroy();
+    chart = new Chart(ctx,{ type:'line', data:{ labels: months, datasets }, options:{ plugins:{ legend:{ position:'bottom', labels:{ color:'#e0e6ed', font:{ size:14 } }}, tooltip:{ enabled:true }}, onClick:(evt)=>{
+      const points = chart.getElementsAtEventForMode(evt,'nearest',{ intersect:true },true);
+      if(points.length){
+        const p = points[0];
+        const dataset = chart.data.datasets[p.datasetIndex];
+        const value = dataset.data[p.index];
+        const maand = chart.data.labels[p.index];
+        chart.tooltip.setActiveElements([p], {x:evt.x,y:evt.y});
+        chart.update();
+      }
+    }, scales:{ x:{ ticks:{ color:'#e0e6ed', font:{ size:12 }}, title:{ display:true, text:'Maand', color:'#e0e6ed', font:{ size:14 }}}, y:{ ticks:{ color:'#e0e6ed', font:{ size:12 }}, title:{ display:true, text:'Eindvoorraad', color:'#e0e6ed', font:{ size:14 }}}}, maintainAspectRatio:false, responsive:true } });
+  }
+
+  $showTrend.addEventListener('change', ()=>renderChart());
+
+  function renderTable(){
+    const selected = getSelectedTypes();
+    $tableHead.innerHTML = '';
+    const trh = document.createElement('tr');
+    trh.innerHTML = '<th>Producttype</th>' + months.map(m=>`<th>${m}</th>`).join('');
+    $tableHead.appendChild(trh);
+    $tableBody.innerHTML = '';
+    selected.forEach(t=>{
+      const tds = months.map(m=>{ const v = pivot[m]?.[t] ?? 0; return `<td>${v}</td>`; }).join('');
+      $tableBody.innerHTML += `<tr><td>${t}</td>${tds}</tr>`;
+    });
+  }
+</script>
+</body>
+</html>
