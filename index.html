@@ -1,366 +1,258 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Actuele Voorraad & Omzet — Excel Import</title>
+  <meta charset="UTF-8">
+  <title>Voorraad & Omzet Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
+      background-color: #0b1e39;
+      color: #f5f5f5;
       margin: 20px;
-      background: #0d1b2a;
-      color: #e0e6ed;
     }
     h1, h2 {
-      color: #f1f5f9;
-    }
-    #file {
-      margin: 10px 0 20px;
-      background: #1b263b;
-      color: #e0e6ed;
-      padding: 6px;
-      border-radius: 6px;
-      border: 1px solid #415a77;
-    }
-    #typeChips label {
-      margin-right: 10px;
-      display: inline-flex;
-      align-items: center;
-      background: #1b263b;
-      color: #e0e6ed;
-      padding: 4px 8px;
-      border-radius: 12px;
-      font-size: 14px;
-      cursor: pointer;
-      border: 1px solid #415a77;
+      color: #ffffff;
     }
     table {
       border-collapse: collapse;
+      margin-bottom: 30px;
       width: 100%;
-      margin: 20px 0;
-      background: #1b263b;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+      background: #13294b;
+      border-radius: 8px;
+      overflow: hidden;
     }
     th, td {
-      border: 1px solid #415a77;
       padding: 8px 12px;
-      text-align: center;
-      color: #e0e6ed;
+      border-bottom: 1px solid #1f3b68;
+      text-align: left;
     }
     th {
-      background: #274060;
+      background: #1a3d6d;
+      color: #fff;
     }
-    tr:nth-child(even) {
-      background: #1e3350;
+    tr:hover {
+      background: #244b80;
     }
-    canvas {
-      max-width: 1800px;
-      height: 800px !important;
-      background: #1b263b;
-      padding: 10px;
-      border-radius: 8px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.4);
-      margin-top: 20px;
+    .tabs {
+      display: flex;
+      border-bottom: 2px solid #1a3d6d;
+      margin-bottom: 20px;
     }
-    #controls {
-      margin: 15px 0;
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 12px;
+      cursor: pointer;
+      background: #13294b;
+      transition: background 0.3s;
+    }
+    .tab.active {
+      background: #1a3d6d;
+      font-weight: bold;
+      color: #ffcc00;
+    }
+    .chart-container {
+      position: relative;
+      width: 100%;
+      height: 500px;
+      opacity: 0;
+      transition: opacity 0.4s ease-in-out;
+      display: none;
+    }
+    .chart-container.active {
+      display: block;
+      opacity: 1;
     }
   </style>
 </head>
 <body>
-  <h1>Actuele Voorraad & Omzet</h1>
-  <input id="file" type="file" accept=".xlsx,.xls" />
-  <div id="typeChips"></div>
+  <h1>Voorraad & Omzet Dashboard</h1>
+  <input type="file" id="input-excel" />
 
-  <div id="controls">
-    <label style="cursor:pointer"><input type="checkbox" id="showTrend" /> Toon trendlijnen</label>
+  <h2>Voorraad per maand</h2>
+  <div id="table-container"></div>
+
+  <h2>Omzet per maand</h2>
+  <div id="revenue-table-container"></div>
+
+  <div class="tabs">
+    <div class="tab active" data-target="line-chart-container">Lijngrafiek</div>
+    <div class="tab" data-target="stacked-chart-container">Stacked grafiek</div>
   </div>
 
-  <h2>Overzicht eindvoorraad per producttype</h2>
-  <table id="table">
-    <thead></thead>
-    <tbody></tbody>
-  </table>
-
-  <h2>Verloop eindvoorraad</h2>
-  <canvas id="chart"></canvas>
-
-  <h2>Omzet per maand per producttype (overzicht)</h2>
-  <table id="revenueTable">
-    <thead></thead>
-    <tbody></tbody>
-  </table>
-
-  <h2>Verloop omzet</h2>
-  <canvas id="revenueChart"></canvas>
+  <div id="line-chart-container" class="chart-container active">
+    <canvas id="lineChart"></canvas>
+  </div>
+  <div id="stacked-chart-container" class="chart-container">
+    <canvas id="stackedChart"></canvas>
+  </div>
 
 <script>
-  const MAP_SYNONIEMEN = {
-    'schoenen': 'Klompen',
-    'klompen': 'Klompen',
-    'sneakers': 'Sneakers',
-    'mokken': 'Mokken',
-    'sokken': 'Sokken',
-    'compressiesokken': 'Compressiesokken'
+document.getElementById('input-excel').addEventListener('change', handleFile);
+
+const prices = {
+  'sokken': 10.95,
+  'compressiesokken': 29.99,
+  'klompen': 79.99,
+  'schoenen': 79.99,
+  'sneakers': 99.99,
+  'mokken': 14.95
+};
+
+let lineChart, stackedChart;
+
+function normalizeType(type) {
+  if (!type) return '';
+  const t = type.trim().toLowerCase();
+  if (t.includes('sokken')) return 'Sokken';
+  if (t.includes('compressiesokken')) return 'Compressiesokken';
+  if (t.includes('klompen') || t.includes('schoenen')) return 'Klompen';
+  if (t.includes('sneakers')) return 'Sneakers';
+  if (t.includes('mokken')) return 'Mokken';
+  return type;
+}
+
+function handleFile(e) {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const data = new Uint8Array(evt.target.result);
+    const workbook = XLSX.read(data, { type: 'array' });
+
+    const months = workbook.SheetNames;
+    const inventoryData = {};
+    const revenueData = {};
+
+    months.forEach(month => {
+      const sheet = workbook.Sheets[month];
+      const rows = XLSX.utils.sheet_to_json(sheet);
+
+      rows.forEach(row => {
+        const type = normalizeType(row['Product type']);
+        const endingInv = parseFloat(row['Ending inventory units']) || 0;
+        const sold = parseFloat(row['Inventory units sold']) || 0;
+        const price = prices[type.toLowerCase()] || 0;
+        const revenue = sold * price;
+
+        if (!inventoryData[type]) inventoryData[type] = {};
+        inventoryData[type][month] = (inventoryData[type][month] || 0) + endingInv;
+
+        if (!revenueData[type]) revenueData[type] = {};
+        revenueData[type][month] = (revenueData[type][month] || 0) + revenue;
+      });
+    });
+
+    renderInventoryTable(months, inventoryData);
+    renderRevenueTable(months, revenueData);
+    renderCharts(months, inventoryData, revenueData);
   };
+  reader.readAsArrayBuffer(file);
+}
 
-  const PRIJZEN = {
-    'Sokken': 10.95,
-    'Compressiesokken': 29.99,
-    'Klompen': 79.99,
-    'Sneakers': 99.99,
-    'Mokken': 14.95
-  };
-
-  function normaliseerType(raw) {
-    if (!raw) return 'Onbekend';
-    const key = String(raw).trim().toLowerCase();
-    if (MAP_SYNONIEMEN[key]) return MAP_SYNONIEMEN[key];
-    if (/^sok(ken)?$/.test(key)) return 'Sokken';
-    if (/^compressie\\s*sok(ken)?$/.test(key)) return 'Compressiesokken';
-    if (/^schoen(en)?$/.test(key)) return 'Klompen';
-    if (/^sneaker(s)?$/.test(key)) return 'Sneakers';
-    if (/^mok(ken)?$/.test(key)) return 'Mokken';
-    return key.charAt(0).toUpperCase()+key.slice(1);
-  }
-
-  function parseNumber(v){
-    if (v == null || v === '') return 0;
-    if (typeof v === 'number') return v;
-    const s = String(v).replace(/\\./g,'').replace(',', '.');
-    const n = Number(s);
-    return Number.isFinite(n) ? n : 0;
-  }
-
-  function detectKolommen(headers){
-    const idx = { product: -1, eindvoorraad: -1, verkocht: -1 };
-    headers.forEach((h,i)=>{
-      const k = String(h||'').trim().toLowerCase();
-      if (idx.product === -1 && k === 'product type') idx.product = i;
-      if (idx.eindvoorraad === -1 && k === 'ending inventory units') idx.eindvoorraad = i;
-      if (idx.verkocht === -1 && k === 'inventory units sold') idx.verkocht = i;
+function renderInventoryTable(months, data) {
+  let html = "<table><tr><th>Product type</th>";
+  months.forEach(m => html += `<th>${m}</th>`);
+  html += "</tr>";
+  Object.keys(data).forEach(type => {
+    html += `<tr><td>${type}</td>`;
+    months.forEach(m => {
+      html += `<td>${data[type][m] || 0}</td>`;
     });
-    return idx;
-  }
+    html += "</tr>";
+  });
+  html += "</table>";
+  document.getElementById('table-container').innerHTML = html;
+}
 
-  function sortMonths(months){
-    return months.slice().sort((a,b)=>{
-      const da = Date.parse(a+"-01") || Date.parse(a);
-      const db = Date.parse(b+"-01") || Date.parse(b);
-      return (da||0) - (db||0);
+function renderRevenueTable(months, data) {
+  let html = "<table><tr><th>Product type</th>";
+  months.forEach(m => html += `<th>${m} (€ / %)</th>`);
+  html += "</tr>";
+
+  months.forEach(month => {
+    let total = 0;
+    Object.keys(data).forEach(type => {
+      total += data[type][month] || 0;
     });
-  }
+    if (total === 0) total = 1;
 
-  function calcPolyTrend(yValues, degree=2){
-    const n = yValues.length;
-    const x = Array.from({length:n}, (_,i)=>i+1);
-    const X = [];
-    for (let i=0; i<n; i++){
-      X[i] = [];
-      for (let j=0; j<=degree; j++){
-        X[i][j] = Math.pow(x[i], j);
-      }
-    }
-    const Y = yValues;
-    const XT = X[0].map((_,c)=>X.map(r=>r[c]));
-    const XTX = XT.map(r=>XT[0].map((_,c)=> r.reduce((sum,v,i)=> sum+v*X[i][c],0)));
-    const XTY = XT.map(r=> r.reduce((sum,v,i)=> sum+v*Y[i],0));
-    const m = degree+1;
-    const A = XTX.map((row,i)=> row.concat([XTY[i]]));
-    for(let i=0; i<m; i++){
-      let max=i;
-      for(let k=i+1; k<m; k++) if(Math.abs(A[k][i])>Math.abs(A[max][i])) max=k;
-      [A[i],A[max]]=[A[max],A[i]];
-      for(let k=i+1;k<m;k++){ 
-        const f=A[k][i]/A[i][i];
-        for(let j=i;j<=m;j++) A[k][j]-=A[i][j]*f;
-      }
-    }
-    const coeff=new Array(m);
-    for(let i=m-1;i>=0;i--){
-      let sum=A[i][m];
-      for(let j=i+1;j<m;j++) sum-=A[i][j]*coeff[j];
-      coeff[i]=sum/A[i][i];
-    }
-    return x.map(xx=> coeff.reduce((sum,c,j)=> sum+c*Math.pow(xx,j),0));
-  }
-
-  let months = [];
-  let types = new Set();
-  let pivot = {};
-  let omzetPivot = {};
-  let chart;
-  let revenueChart;
-
-  const $file = document.getElementById('file');
-  const $typeChips = document.getElementById('typeChips');
-  const $tableHead = document.querySelector('#table thead');
-  const $tableBody = document.querySelector('#table tbody');
-  const $showTrend = document.getElementById('showTrend');
-  const $revHead = document.querySelector('#revenueTable thead');
-  const $revBody = document.querySelector('#revenueTable tbody');
-
-  $file.addEventListener('change', async (e)=>{
-    const file = e.target.files?.[0];
-    if(!file) return;
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
-    months = []; types = new Set(); pivot = {}; omzetPivot = {};
-
-    wb.SheetNames.forEach(sheetName=>{
-      const ws = wb.Sheets[sheetName];
-      const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
-      if (json.length === 0) return;
-      const headers = json[0];
-      const idx = detectKolommen(headers);
-      if (idx.product === -1 || idx.eindvoorraad === -1) return;
-
-      const maand = sheetName;
-      if (!months.includes(maand)) months.push(maand);
-      if (!pivot[maand]) pivot[maand] = {};
-      if (!omzetPivot[maand]) omzetPivot[maand] = {};
-
-      for (let r=1; r<json.length; r++){
-        const row = json[r];
-        const t = normaliseerType(row[idx.product]);
-        const eind = parseNumber(row[idx.eindvoorraad]);
-        const verkocht = idx.verkocht >= 0 ? parseNumber(row[idx.verkocht]) : 0;
-
-        types.add(t);
-        pivot[maand][t] = (pivot[maand][t]||0) + eind;
-
-        const prijs = PRIJZEN[t] || 0;
-        omzetPivot[maand][t] = (omzetPivot[maand][t]||0) + verkocht * prijs;
-      }
+    Object.keys(data).forEach((type, i) => {
+      if (i === 0) html += `<tr><td>${type}</td>`;
+      else html += `<tr><td>${type}</td>`;
+      months.forEach(m => {
+        const rev = data[type][m] || 0;
+        const perc = ((rev / (Object.keys(data).reduce((s, t) => s + (data[t][m]||0), 0))) * 100).toFixed(1);
+        html += `<td>€${rev.toFixed(2)} (${perc}%)</td>`;
+      });
+      html += "</tr>";
     });
-
-    months = sortMonths(months);
-    buildTypeFilters();
-    renderChart();
-    renderTable();
-    renderRevenueTable();
-    renderRevenueChart();
   });
 
-  function buildTypeFilters(){
-    $typeChips.innerHTML = '';
-    Array.from(types).sort().forEach(t=>{
-      const id = `t-${t.replace(/[^a-z0-9]+/gi,'-')}`;
-      const wrap = document.createElement('label');
-      wrap.innerHTML = `<input id="${id}" type="checkbox" checked> ${t}`;
-      wrap.querySelector('input').addEventListener('change', ()=>{
-        renderChart(); 
-        renderTable(); 
-        renderRevenueTable();
-        renderRevenueChart();
-      });
-      $typeChips.appendChild(wrap);
-    });
-  }
+  document.getElementById('revenue-table-container').innerHTML = html;
+}
 
-  function getSelectedTypes(){
-    return Array.from($typeChips.querySelectorAll('input:checked')).map(cb=>cb.nextSibling.textContent.trim());
-  }
+function renderCharts(months, inventoryData, revenueData) {
+  const colors = ['#ff6384','#36a2eb','#ffcd56','#4bc0c0','#9966ff'];
+  const datasetsLine = Object.keys(inventoryData).map((type, i) => ({
+    label: type,
+    data: months.map(m => inventoryData[type][m] || 0),
+    borderColor: colors[i % colors.length],
+    backgroundColor: colors[i % colors.length],
+    fill: false,
+    tension: 0.3
+  }));
 
-  function renderChart(){
-    const ctx = document.getElementById('chart').getContext('2d');
-    const selected = getSelectedTypes();
-    const colors = ['#ffb703','#8ecae6','#fb8500','#ff006e','#06d6a0','#ffd166','#ef476f','#118ab2'];
-    const datasets = selected.map((t,i)=>({ 
-      label: t, 
-      data: months.map(m=> pivot[m]?.[t] ?? 0), 
-      borderColor: colors[i % colors.length], 
-      backgroundColor: colors[i % colors.length], 
-      borderWidth:2, tension:.2
-    }));
-    if ($showTrend.checked){
-      selected.forEach((t,i)=>{
-        const values = months.map(m=> pivot[m]?.[t] ?? 0);
-        const trend = calcPolyTrend(values,2);
-        datasets.push({
-          label: t+" trend", 
-          data: trend,
-          borderColor: colors[i % colors.length],
-          borderDash:[5,5],
-          borderWidth:2,
-          fill:false,
-          pointRadius:0,
-          tension:0
-        });
-      });
+  if (lineChart) lineChart.destroy();
+  const ctx1 = document.getElementById('lineChart').getContext('2d');
+  lineChart = new Chart(ctx1, {
+    type: 'line',
+    data: { labels: months, datasets: datasetsLine },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#fff', font: { size: 14 } } } },
+      scales: {
+        x: { ticks: { color: '#fff', font: { size: 14 } } },
+        y: { ticks: { color: '#fff', font: { size: 14 } } }
+      }
     }
-    if(chart) chart.destroy();
-    chart = new Chart(ctx,{ type:'line', data:{ labels: months, datasets }, options:{ plugins:{ legend:{ position:'bottom', labels:{ color:'#e0e6ed', font:{ size:18 }}}, tooltip:{ enabled:true }}, scales:{ x:{ ticks:{ color:'#e0e6ed', font:{ size:16 }}, title:{ display:true, text:'Maand', color:'#e0e6ed', font:{ size:18 }}}, y:{ ticks:{ color:'#e0e6ed', font:{ size:16 }}, title:{ display:true, text:'Eindvoorraad', color:'#e0e6ed', font:{ size:18 }}}}, maintainAspectRatio:false, responsive:true } });
-  }
-
-  function renderRevenueChart(){
-    const ctx = document.getElementById('revenueChart').getContext('2d');
-    const selected = getSelectedTypes();
-    const colors = ['#ffb703','#8ecae6','#fb8500','#ff006e','#06d6a0','#ffd166','#ef476f','#118ab2'];
-    const datasets = selected.map((t,i)=>({ 
-      label: t, 
-      data: months.map(m=> omzetPivot[m]?.[t] ?? 0), 
-      borderColor: colors[i % colors.length], 
-      backgroundColor: colors[i % colors.length], 
-      borderWidth:2, tension:.2
-    }));
-    if ($showTrend.checked){
-      selected.forEach((t,i)=>{
-        const values = months.map(m=> omzetPivot[m]?.[t] ?? 0);
-        const trend = calcPolyTrend(values,2);
-        datasets.push({
-          label: t+" trend", 
-          data: trend,
-          borderColor: colors[i % colors.length],
-          borderDash:[5,5],
-          borderWidth:2,
-          fill:false,
-          pointRadius:0,
-          tension:0
-        });
-      });
-    }
-    if(revenueChart) revenueChart.destroy();
-    revenueChart = new Chart(ctx,{ type:'line', data:{ labels: months, datasets }, options:{ plugins:{ legend:{ position:'bottom', labels:{ color:'#e0e6ed', font:{ size:18 }}}, tooltip:{ enabled:true }}, scales:{ x:{ ticks:{ color:'#e0e6ed', font:{ size:16 }}, title:{ display:true, text:'Maand', color:'#e0e6ed', font:{ size:18 }}}, y:{ ticks:{ color:'#e0e6ed', font:{ size:16 }}, title:{ display:true, text:'Omzet (€)', color:'#e0e6ed', font:{ size:18 }}}}, maintainAspectRatio:false, responsive:true } });
-  }
-
-  $showTrend.addEventListener('change', ()=>{
-    renderChart();
-    renderRevenueChart();
   });
 
-  function renderTable(){
-    const selected = getSelectedTypes();
-    $tableHead.innerHTML = '';
-    const trh = document.createElement('tr');
-    trh.innerHTML = '<th>Producttype</th>' + months.map(m=>`<th>${m}</th>`).join('');
-    $tableHead.appendChild(trh);
-    $tableBody.innerHTML = '';
-    selected.forEach(t=>{
-      const tds = months.map(m=>{ const v = pivot[m]?.[t] ?? 0; return `<td>${v}</td>`; }).join('');
-      $tableBody.innerHTML += `<tr><td>${t}</td>${tds}</tr>`;
-    });
-  }
+  const datasetsStacked = Object.keys(revenueData).map((type, i) => ({
+    label: type,
+    data: months.map(m => revenueData[type][m] || 0),
+    backgroundColor: colors[i % colors.length]
+  }));
 
-  function renderRevenueTable(){
-    const selected = getSelectedTypes();
-    $revHead.innerHTML = '';
-    const trh = document.createElement('tr');
-    trh.innerHTML = '<th>Producttype</th>' + months.map(m=>`<th>${m}</th>`).join('');
-    $revHead.appendChild(trh);
-    $revBody.innerHTML = '';
-    selected.forEach(t=>{
-      const tds = months.map(m=>{ 
-        const omzet = omzetPivot[m]?.[t] ?? 0; 
-        const total = Object.values(omzetPivot[m]||{}).reduce((a,b)=>a+b,0);
-        const perc = total>0 ? ((omzet/total)*100).toFixed(1)+'%' : '-';
-        return `<td>€${omzet.toFixed(2)}<br><small>${perc}</small></td>`; 
-      }).join('');
-      $revBody.innerHTML += `<tr><td>${t}</td>${tds}</tr>`;
+  if (stackedChart) stackedChart.destroy();
+  const ctx2 = document.getElementById('stackedChart').getContext('2d');
+  stackedChart = new Chart(ctx2, {
+    type: 'bar',
+    data: { labels: months, datasets: datasetsStacked },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#fff', font: { size: 14 } } } },
+      scales: {
+        x: { stacked: true, ticks: { color: '#fff', font: { size: 14 } } },
+        y: { stacked: true, ticks: { color: '#fff', font: { size: 14 } } }
+      }
+    }
+  });
+}
+
+// Tabs met fade animatie
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const target = tab.dataset.target;
+    document.querySelectorAll('.chart-container').forEach(c => {
+      if (c.id === target) c.classList.add('active');
+      else c.classList.remove('active');
     });
-  }
+  });
+});
 </script>
 </body>
 </html>
