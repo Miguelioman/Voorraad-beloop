@@ -2,257 +2,216 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
-  <title>Voorraad & Omzet Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <title>Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/regression@2.0.1/dist/regression.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
-      background-color: #0b1e39;
-      color: #f5f5f5;
-      margin: 20px;
+      background-color: #0f172a;
+      color: white;
+      padding: 20px;
     }
-    h1, h2 {
-      color: #ffffff;
+    h2 {
+      margin-top: 20px;
     }
     table {
       border-collapse: collapse;
-      margin-bottom: 30px;
       width: 100%;
-      background: #13294b;
+      margin-top: 20px;
+      background: #1e293b;
       border-radius: 8px;
       overflow: hidden;
     }
     th, td {
-      padding: 8px 12px;
-      border-bottom: 1px solid #1f3b68;
-      text-align: left;
+      border: 1px solid #334155;
+      padding: 8px;
+      text-align: center;
     }
     th {
-      background: #1a3d6d;
-      color: #fff;
+      background-color: #334155;
     }
-    tr:hover {
-      background: #244b80;
-    }
-    .tabs {
+    #tabs {
       display: flex;
-      border-bottom: 2px solid #1a3d6d;
       margin-bottom: 20px;
+      border-bottom: 2px solid #334155;
     }
     .tab {
-      flex: 1;
-      text-align: center;
-      padding: 12px;
+      padding: 10px 20px;
       cursor: pointer;
-      background: #13294b;
-      transition: background 0.3s;
+      border-radius: 8px 8px 0 0;
+      margin-right: 5px;
+      background: #1e293b;
+      transition: background 0.3s ease, transform 0.3s ease;
     }
     .tab.active {
-      background: #1a3d6d;
-      font-weight: bold;
-      color: #ffcc00;
+      background: #3b82f6;
+      transform: translateY(-2px);
     }
     .chart-container {
-      position: relative;
-      width: 100%;
-      height: 500px;
-      opacity: 0;
-      transition: opacity 0.4s ease-in-out;
       display: none;
+      animation: fadeIn 0.4s ease-in-out;
     }
     .chart-container.active {
       display: block;
-      opacity: 1;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    #filters {
+      margin: 15px 0;
     }
   </style>
 </head>
 <body>
-  <h1>Voorraad & Omzet Dashboard</h1>
-  <input type="file" id="input-excel" />
+  <h1>Dashboard</h1>
 
-  <h2>Voorraad per maand</h2>
-  <div id="table-container"></div>
+  <div id="filters"></div>
+
+  <div id="tabs">
+    <div class="tab active" data-tab="line">Voorraad per producttype</div>
+    <div class="tab" data-tab="stacked">Omzet stacked chart</div>
+  </div>
+
+  <div id="line" class="chart-container active">
+    <canvas id="lineChart"></canvas>
+  </div>
+  <div id="stacked" class="chart-container">
+    <canvas id="stackedChart"></canvas>
+  </div>
 
   <h2>Omzet per maand</h2>
   <div id="revenue-table-container"></div>
 
-  <div class="tabs">
-    <div class="tab active" data-target="line-chart-container">Lijngrafiek</div>
-    <div class="tab" data-target="stacked-chart-container">Stacked grafiek</div>
-  </div>
+  <script>
+    let lineChart, stackedChart;
 
-  <div id="line-chart-container" class="chart-container active">
-    <canvas id="lineChart"></canvas>
-  </div>
-  <div id="stacked-chart-container" class="chart-container">
-    <canvas id="stackedChart"></canvas>
-  </div>
+    // Voorbeelddata (vervang dit door je eigen CSV parsing)
+    const months = ["02-2025","03-2025","04-2025","05-2025","06-2025","07-2025"];
+    const inventoryData = {
+      "Sokken": {"02-2025":8000,"03-2025":14000,"04-2025":11000,"05-2025":10000,"06-2025":9500,"07-2025":9400},
+      "Klompen": {"02-2025":700,"03-2025":10000,"04-2025":9700,"05-2025":8200,"06-2025":10100,"07-2025":12500},
+      "Sneaker": {"02-2025":0,"03-2025":0,"04-2025":0,"05-2025":0,"06-2025":0,"07-2025":0}
+    };
+    const revenueData = {
+      "Sokken": {"02-2025":2923.65,"03-2025":9570.30,"04-2025":8332.95,"05-2025":9997.35,"06-2025":7588.35,"07-2025":6942.30},
+      "Klompen": {"02-2025":719.66,"03-2025":9918.76,"04-2025":9678.79,"05-2025":8238.97,"06-2025":10158.73,"07-2025":12558.43},
+      "Sneaker": {"02-2025":0,"03-2025":0,"04-2025":0,"05-2025":0,"06-2025":0,"07-2025":0}
+    };
 
-<script>
-document.getElementById('input-excel').addEventListener('change', handleFile);
-
-const prices = {
-  'sokken': 10.95,
-  'compressiesokken': 29.99,
-  'klompen': 79.99,
-  'schoenen': 79.99,
-  'sneakers': 99.99,
-  'mokken': 14.95
-};
-
-let lineChart, stackedChart;
-
-function normalizeType(type) {
-  if (!type) return '';
-  const t = type.trim().toLowerCase();
-  if (t.includes('sokken')) return 'Sokken';
-  if (t.includes('compressiesokken')) return 'Compressiesokken';
-  if (t.includes('klompen') || t.includes('schoenen')) return 'Klompen';
-  if (t.includes('sneakers')) return 'Sneakers';
-  if (t.includes('mokken')) return 'Mokken';
-  return type;
-}
-
-function handleFile(e) {
-  const file = e.target.files[0];
-  const reader = new FileReader();
-  reader.onload = function(evt) {
-    const data = new Uint8Array(evt.target.result);
-    const workbook = XLSX.read(data, { type: 'array' });
-
-    const months = workbook.SheetNames;
-    const inventoryData = {};
-    const revenueData = {};
-
-    months.forEach(month => {
-      const sheet = workbook.Sheets[month];
-      const rows = XLSX.utils.sheet_to_json(sheet);
-
-      rows.forEach(row => {
-        const type = normalizeType(row['Product type']);
-        const endingInv = parseFloat(row['Ending inventory units']) || 0;
-        const sold = parseFloat(row['Inventory units sold']) || 0;
-        const price = prices[type.toLowerCase()] || 0;
-        const revenue = sold * price;
-
-        if (!inventoryData[type]) inventoryData[type] = {};
-        inventoryData[type][month] = (inventoryData[type][month] || 0) + endingInv;
-
-        if (!revenueData[type]) revenueData[type] = {};
-        revenueData[type][month] = (revenueData[type][month] || 0) + revenue;
-      });
-    });
-
-    renderInventoryTable(months, inventoryData);
-    renderRevenueTable(months, revenueData);
-    renderCharts(months, inventoryData, revenueData);
-  };
-  reader.readAsArrayBuffer(file);
-}
-
-function renderInventoryTable(months, data) {
-  let html = "<table><tr><th>Product type</th>";
-  months.forEach(m => html += `<th>${m}</th>`);
-  html += "</tr>";
-  Object.keys(data).forEach(type => {
-    html += `<tr><td>${type}</td>`;
-    months.forEach(m => {
-      html += `<td>${data[type][m] || 0}</td>`;
-    });
-    html += "</tr>";
-  });
-  html += "</table>";
-  document.getElementById('table-container').innerHTML = html;
-}
-
-function renderRevenueTable(months, data) {
-  let html = "<table><tr><th>Product type</th>";
-  months.forEach(m => html += `<th>${m} (€ / %)</th>`);
-  html += "</tr>";
-
-  months.forEach(month => {
-    let total = 0;
-    Object.keys(data).forEach(type => {
-      total += data[type][month] || 0;
-    });
-    if (total === 0) total = 1;
-
-    Object.keys(data).forEach((type, i) => {
-      if (i === 0) html += `<tr><td>${type}</td>`;
-      else html += `<tr><td>${type}</td>`;
-      months.forEach(m => {
-        const rev = data[type][m] || 0;
-        const perc = ((rev / (Object.keys(data).reduce((s, t) => s + (data[t][m]||0), 0))) * 100).toFixed(1);
-        html += `<td>€${rev.toFixed(2)} (${perc}%)</td>`;
-      });
+    function renderRevenueTable(months, data) {
+      let html = "<table><tr><th>Product type</th>";
+      months.forEach(m => html += `<th>${m} (€ / %)</th>`);
       html += "</tr>";
-    });
-  });
 
-  document.getElementById('revenue-table-container').innerHTML = html;
-}
+      const totals = {};
+      months.forEach(m => {
+        totals[m] = Object.keys(data).reduce((sum, type) => sum + (data[type][m] || 0), 0);
+      });
 
-function renderCharts(months, inventoryData, revenueData) {
-  const colors = ['#ff6384','#36a2eb','#ffcd56','#4bc0c0','#9966ff'];
-  const datasetsLine = Object.keys(inventoryData).map((type, i) => ({
-    label: type,
-    data: months.map(m => inventoryData[type][m] || 0),
-    borderColor: colors[i % colors.length],
-    backgroundColor: colors[i % colors.length],
-    fill: false,
-    tension: 0.3
-  }));
+      Object.keys(data).forEach(type => {
+        const checkbox = document.getElementById(`filter-${type}`);
+        if (checkbox && !checkbox.checked) return;
+        html += `<tr><td>${type}</td>`;
+        months.forEach(m => {
+          const rev = data[type][m] || 0;
+          const perc = totals[m] > 0 ? ((rev / totals[m]) * 100).toFixed(1) : 0;
+          html += `<td>€${rev.toFixed(2)} (${perc}%)</td>`;
+        });
+        html += "</tr>";
+      });
 
-  if (lineChart) lineChart.destroy();
-  const ctx1 = document.getElementById('lineChart').getContext('2d');
-  lineChart = new Chart(ctx1, {
-    type: 'line',
-    data: { labels: months, datasets: datasetsLine },
-    options: {
-      responsive: true,
-      plugins: { legend: { labels: { color: '#fff', font: { size: 14 } } } },
-      scales: {
-        x: { ticks: { color: '#fff', font: { size: 14 } } },
-        y: { ticks: { color: '#fff', font: { size: 14 } } }
-      }
+      html += "</table>";
+      document.getElementById('revenue-table-container').innerHTML = html;
     }
-  });
 
-  const datasetsStacked = Object.keys(revenueData).map((type, i) => ({
-    label: type,
-    data: months.map(m => revenueData[type][m] || 0),
-    backgroundColor: colors[i % colors.length]
-  }));
+    function renderCharts(months, inventoryData, revenueData) {
+      const colors = ['#ff6384','#36a2eb','#ffcd56','#4bc0c0','#9966ff'];
 
-  if (stackedChart) stackedChart.destroy();
-  const ctx2 = document.getElementById('stackedChart').getContext('2d');
-  stackedChart = new Chart(ctx2, {
-    type: 'bar',
-    data: { labels: months, datasets: datasetsStacked },
-    options: {
-      responsive: true,
-      plugins: { legend: { labels: { color: '#fff', font: { size: 14 } } } },
-      scales: {
-        x: { stacked: true, ticks: { color: '#fff', font: { size: 14 } } },
-        y: { stacked: true, ticks: { color: '#fff', font: { size: 14 } } }
-      }
+      const activeTypes = Object.keys(inventoryData).filter(type => {
+        const checkbox = document.getElementById(`filter-${type}`);
+        return checkbox ? checkbox.checked : true;
+      });
+
+      const datasetsLine = activeTypes.map((type, i) => ({
+        label: type,
+        data: months.map(m => inventoryData[type][m] || 0),
+        borderColor: colors[i % colors.length],
+        backgroundColor: colors[i % colors.length],
+        fill: false,
+        tension: 0.3
+      }));
+
+      if (lineChart) lineChart.destroy();
+      const ctx1 = document.getElementById('lineChart').getContext('2d');
+      lineChart = new Chart(ctx1, {
+        type: 'line',
+        data: { labels: months, datasets: datasetsLine },
+        options: {
+          responsive: true,
+          plugins: { legend: { labels: { color: '#fff', font: { size: 14 } } } },
+          scales: {
+            x: { ticks: { color: '#fff' } },
+            y: { ticks: { color: '#fff' } }
+          }
+        }
+      });
+
+      const datasetsStacked = activeTypes.map((type, i) => ({
+        label: type,
+        data: months.map(m => revenueData[type][m] || 0),
+        backgroundColor: colors[i % colors.length]
+      }));
+
+      if (stackedChart) stackedChart.destroy();
+      const ctx2 = document.getElementById('stackedChart').getContext('2d');
+      stackedChart = new Chart(ctx2, {
+        type: 'bar',
+        data: { labels: months, datasets: datasetsStacked },
+        options: {
+          responsive: true,
+          plugins: { legend: { labels: { color: '#fff', font: { size: 14 } } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#fff' } },
+            y: { stacked: true, ticks: { color: '#fff' } }
+          }
+        }
+      });
+
+      renderRevenueTable(months, revenueData);
     }
-  });
-}
 
-// Tabs met fade animatie
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    const target = tab.dataset.target;
-    document.querySelectorAll('.chart-container').forEach(c => {
-      if (c.id === target) c.classList.add('active');
-      else c.classList.remove('active');
+    // Init filters
+    function initFilters(inventoryData) {
+      let filterHtml = "<h3>Filter producttypes:</h3>";
+      Object.keys(inventoryData).forEach(type => {
+        filterHtml += `<label style="margin-right:15px;">
+          <input type="checkbox" id="filter-${type}" checked> ${type}
+        </label>`;
+      });
+      document.getElementById("filters").innerHTML = filterHtml;
+
+      Object.keys(inventoryData).forEach(type => {
+        document.getElementById(`filter-${type}`).addEventListener("change", () => {
+          renderCharts(months, inventoryData, revenueData);
+        });
+      });
+    }
+
+    // Tabs
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".chart-container").forEach(c => c.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(tab.dataset.tab).classList.add("active");
+      });
     });
-  });
-});
-</script>
+
+    // Start
+    initFilters(inventoryData);
+    renderCharts(months, inventoryData, revenueData);
+  </script>
 </body>
 </html>
